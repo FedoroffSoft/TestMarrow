@@ -2,6 +2,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using TestMarrow;
 using System.Collections.Generic;
+using KellermanSoftware.CompareNetObjects;
 
 namespace FedoroffSoft.TestMarrow.UnitTest.CollectionWithSubStruct
 {
@@ -13,21 +14,63 @@ namespace FedoroffSoft.TestMarrow.UnitTest.CollectionWithSubStruct
 		{
 			String str = @">| Name1			| Value1	| 
 							| Marrow		| 13.07		|
-						   >| strcutProp1	| Name2	    | Value2 | 
+						   >| StrcutProp1	| Name2	    | Value2 | 
 							|				| SubMarrow | 0		 |
 							| Marrow 3		| -12		|
 					";
 
 			var parser = new MarrowParser();
-			var struct1 = parser.Parse<List<Struct1>>(str);
+			var actual = parser.Parse<List<Struct1>>(str);
 
-			Assert.AreEqual("Marrow", struct1[0].Name1, "Name parsing failed");
-			Assert.AreEqual(13.07, struct1[0].Value1, "Value parsing failed");
-			Assert.AreEqual("SubMarrow", struct1[0].strcutProp1.Name2, "strcutProp1.Value parsing failed");
-			Assert.AreEqual(0, struct1[0].strcutProp1.Value2, "strcutProp1.Value parsing failed");
+			var expected = new List<Struct1> {
+				new Struct1 { Name1 = "Marrow", Value1 = 13.07,
+					StrcutProp1 = new Struct2 { Name2 = "SubMarrow", Value2 = 0 }
+				},
+				new Struct1 { Name1 = "Marrow 3", Value1 = -12 }
+			};
 
-			Assert.AreEqual("Marrow 3", struct1[1].Name1, "Name parsing failed");
-			Assert.AreEqual(-12, struct1[1].Value1, "Value parsing failed");
+			CompareLogic compareLogic = new CompareLogic();
+			ComparisonResult result = compareLogic.Compare(actual, expected);
+			if (!result.AreEqual)
+				throw new Exception( result.DifferencesString );
+
+		}
+
+		[TestMethod]
+		public void MultyLineSubPropData()
+		{
+			String str = @">| Name1				| Value1		| 
+							| Marrow			| 13.07			|
+						   >| EnumStrcutProp1	| Name2			| Value2 | 
+							|					| SubMarrow1	| 4		 |
+							|					| SubMarrow2	| 5		 |
+							| NULL				| -12			|
+							| ""				| -.43			|
+					";
+
+			var parser = new MarrowParser();
+			var actual = parser.Parse<List<Struct1>>(str);
+
+			var expected = new List<Struct1> {
+				new Struct1 { Name1 = "Marrow", Value1 = 13.07,
+					EnumStrcutProp1 = new List<Struct2> {
+						new Struct2 {Name2 = "SubMarrow1", Value2 = 4 },
+						new Struct2 {Name2 = "SubMarrow2", Value2 = 5 },
+					}
+				},
+				new Struct1 { Value1 = -12 },
+				new Struct1 { Name1 = String.Empty, Value1 = -0.43 }
+			};
+
+
+			CompareLogic compareLogic = new CompareLogic();
+			compareLogic.Config.IgnoreCollectionOrder = true;
+
+			ComparisonResult result = compareLogic.Compare(actual, expected);
+
+			if (!result.AreEqual)
+				throw new Exception( result.DifferencesString );
+
 		}
 	}
 
@@ -35,7 +78,9 @@ namespace FedoroffSoft.TestMarrow.UnitTest.CollectionWithSubStruct
 	{
 		public string Name1 { get; set; }
 		public Double Value1 { get; set; }
-		public Struct2 strcutProp1 { get; set; }
+		public Struct2 StrcutProp1 { get; set; }
+
+		public IEnumerable<Struct2> EnumStrcutProp1 { get; set; }
 	}
 
 	public class Struct2

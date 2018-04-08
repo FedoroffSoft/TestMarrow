@@ -6,11 +6,21 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using TestMarrow.Configuration;
 
 namespace TestMarrow
 {
     public class MarrowParser
     {
+		private readonly Dictionary<String, Dictionary<String, PropertyConfig>> config;
+		public String NullValue { get; set; } = "NULL";
+		public String EmptyStringValue { get; set; } = @"""";
+
+		public MarrowParser()
+		{
+			config = new Dictionary<String, Dictionary<String, PropertyConfig>>();
+		}
+
 		public T Parse<T>(String str) where T: class, new()
 		{
 			T result = null;
@@ -23,11 +33,14 @@ namespace TestMarrow
 			using (StringReader sr = new StringReader(str))
 				while( (line = sr.ReadLine()) != null)
 					context.SourceLines.Add(line);
-	
-			//Now we start the recursive processing of the lines
-			//The first line is alway a meta data for the first leve class
-			var metaInfo = ParsePropLine<T>(0, context.SourceLines[0]);
 
+			//The first line is alway a meta data for the first leve class
+			
+			MetaInfo parentInfo = CheckCollectionClass(typeof(T), new MetaInfo());
+			parentInfo.FirstLine = true;
+			var metaInfo = ParseMetaLine(parentInfo, context.SourceLines[0]);
+
+			//Now we start the recursive processing of the lines
 			//Let's process the rest of the lines
 			context.StructLevel = 0;
 			context.LineIndex = 1;
@@ -88,22 +101,34 @@ namespace TestMarrow
 				//We encounter with the sub-structure - one of the class propery is not a scalar one
 				if(isPropLine)
 				{
-					var subMetaInfo = ParsePropLine<T>(context.StructLevel + 1, line);
+					var subMetaInfo = ParseMetaLine(context.MetaInfo, line);
 
 					//Let's use the recursion to parse it.
-
-					//System.Collections.Generic.IEnumerable<System.Reflection.MethodInfo> {System.Reflection.MethodInfo[]}
 
 					var curLevelMetaInfo = context.MetaInfo;
 					var curLevelStructLevel = context.StructLevel;
 
+
 					MethodInfo method = ((TypeInfo)(this.GetType())).DeclaredMethods.First(t => t.Name == "ParseLevel");
-					MethodInfo generic = method.MakeGenericMethod(subMetaInfo.PropType);
+					MethodInfo generic = null;
+					if(subMetaInfo.IsCollection)
+					{
+						var genericList = typeof(List<>).MakeGenericType(subMetaInfo.PropType);
+						generic = method.MakeGenericMethod(genericList);
+					}
+					else
+					{
+						generic = method.MakeGenericMethod(subMetaInfo.PropType);
+					}
+
+
+					//Create context for the call
 					context.LineIndex++;
 					context.StructLevel++;
 					context.MetaInfo = subMetaInfo;
 					var subResult = generic.Invoke(this,  new [] { context });
 
+					//Restore context after the call
 					context.StructLevel = curLevelStructLevel;
 					context.MetaInfo = curLevelMetaInfo;
 
@@ -140,9 +165,14 @@ namespace TestMarrow
 
 						PropertyInfo prop = context.MetaInfo.SubPropInfo.First(p => p.Name.Equals(context.MetaInfo.SubPropNames[i]));
 
-
 						//Standart type conversion
-						Object value = Convert.ChangeType(strValues[i], prop.PropertyType);
+						Object value = null;
+						if (prop.PropertyType.Name == "String" && strValues[i].Equals(EmptyStringValue, StringComparison.InvariantCulture))
+							value = String.Empty;
+						else if (strValues[i].Equals(NullValue, StringComparison.InvariantCulture))
+							value = null;
+						else
+							value = Convert.ChangeType(strValues[i], prop.PropertyType);
 
 						//Let's update the property with the value.
 						prop.SetValue(item, value);
@@ -176,76 +206,85 @@ namespace TestMarrow
 		/// <param name="level">Level in the string data</param>
 		/// <param name="line">raw text of the line</param>
 		/// <returns></returns>
-		private MetaInfo ParsePropLine<T>(int level, String line)
+		private MetaInfo ParseMetaLine(MetaInfo parentInfo, String line)
 		{
 			var result = new MetaInfo();
 
 			var rawProps = line
 							.Replace(">", String.Empty)
 							.Split('|')
-							.Where(s => ! String.IsNullOrWhiteSpace(s))//ignore the emty names on the left and right sides of the source string. Note, it's assumend that a property name can't be empty!
+							.Where(s => ! String.IsNullOrWhiteSpace(s))//ignore empty names on the left and right sides of the source string. Note, it's assumend that a property name can't be empty!
 							.Select(s => s.Trim());
-			
-			//We should take into account the current level to get the array of the properties
-			result.SubPropNames = rawProps.Skip(level).ToArray();
 
-			//Let't find the type
-			result.PropType = typeof(T);
-			result.SubPropInfo = result.PropType.GetProperties();
-
-			//If the type is a collection then we need the item type
-			if (typeof(IEnumerable).IsAssignableFrom(result.PropType))
+			//For the first level, the prop type was already parsed
+			if (parentInfo.FirstLine)
 			{
-				result.IsCollection = true;
+				result.PropType = parentInfo.PropType;
+				result.IsCollection = parentInfo.IsCollection;
 
-				//actually we need the collection item type.
-				//We support the collections of on;y one generci type
-				Type[] genericTypes = typeof(T).GetGenericArguments();
-				if (genericTypes.Count() != 1)
-					throw new ArgumentException("currently TestMarrow supports collection of only one generic type");
-
-				result.PropType = genericTypes[0];
-				result.SubPropInfo = result.PropType.GetProperties();
-
-				//lets check that we will be able to create instances of the item type
-				if (result.PropType.GetConstructor(Type.EmptyTypes) == null)
-					throw new ArgumentException($"The generic type '{result.PropType.Name}' has to have a parameterless constructor.");
+				//The names of the properties specified in the test data
+				result.SubPropNames = rawProps.ToArray();
 			}
+			else
+			{
+				//For the non-first levels, we have to extract data form the parent class and the line
 
-			//We deal with a complex property. That case we need the type of that property
-			if (level > 0)
-			{ 
 				//the name of the complex property
-				result.PropName = rawProps.Skip(level - 1).First();
-			
-				if (!result.SubPropInfo.Any(p => p.Name.Equals(result.PropName)))
-							throw new ArgumentException($"The property {result.PropName} is absent in the {result.PropType.Name} class");
+				result.PropName = rawProps.First();
 
-				PropertyInfo prop = result.SubPropInfo.First(p => p.Name.Equals(result.PropName));
-				result.PropType = prop.PropertyType;
-				result.SubPropInfo = result.PropType.GetProperties();
-				result.IsCollection = typeof(IEnumerable).IsAssignableFrom(result.PropType);
-				
+				PropertyInfo prop = parentInfo.PropType.GetProperties().FirstOrDefault(p => p.Name.Equals(result.PropName));
+
+				if(prop == null)
+						throw new ArgumentException($"The property {result.PropName} is absent in the {result.PropType.Name} class");
+
+				result = CheckCollectionClass(prop.PropertyType, result);
+
+				//The names of the properties specified in the test data
+				//we skip the property name in the parent class
+				result.SubPropNames = rawProps.Skip(1).ToArray();
 			}
 
+			//lets check that we will be able to create instances of the item type
+			if (result.PropType.GetConstructor(Type.EmptyTypes) == null)
+				throw new ArgumentException($"The generic type '{result.PropType.Name}' has to have a parameterless constructor.");
 			
+			result.SubPropInfo = result.PropType.GetProperties();
 
 			return result;
 		}
 
-		/// <summary>
-		/// Parses the string to the specified class
-		/// </summary>
-		/// <typeparam name="PropClass"></typeparam>
-		/// <param name="strProp"></param>
-		/// <returns></returns>
-		//private PropClass ParseProperty<PropClass>(string strProp) where PropClass : class
-		//{
-		//	PropClass result = null;
+		private MetaInfo CheckCollectionClass(Type type, MetaInfo meta)
+		{
+			meta.IsCollection = typeof(IEnumerable).IsAssignableFrom(type);
 
-		//	result = Convert.ChangeType(strProp, typeof(PropClass));
+			//If the type is a collection then we need the item type
+			if (meta.IsCollection)
+			{
+				//actually we need the collection item type.
+				//We support the collections of only one generic type
+				Type[] genericTypes = type.GetGenericArguments();
+				if (genericTypes.Count() != 1)
+					throw new ArgumentException("currently TestMarrow supports collection of only one generic type");
 
-		//	return result;
-		//}
+				meta.PropType = genericTypes[0];
+			}
+			else
+				meta.PropType = type;
+
+			return meta;
+		}
+
+
+		public  ClassConfig<T> ConfigureClass<T>() where T: class
+		{
+			String className = typeof(T).Name;
+
+			if (!config.Keys.Contains(className))
+				config.Add(className, new Dictionary<string, PropertyConfig>());
+
+			return new ClassConfig<T>(config[className]);
+		}
+
+		
     }
 }

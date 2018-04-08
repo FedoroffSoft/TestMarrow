@@ -40,6 +40,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Configuration\ClassConfig.cs" />
+    <Compile Include="Configuration\PropertyConfig.cs" />
     <Compile Include="MarrowParser.cs" />
     <Compile Include="MetaInfo.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

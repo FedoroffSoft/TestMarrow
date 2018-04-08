@@ -35,5 +35,7 @@ namespace TestMarrow
 		internal  String[] SubPropNames { get; set; }
 
 		internal  PropertyInfo[] SubPropInfo { get; set; }
+
+		internal Boolean FirstLine { get; set; } = false;
 	}
 }
