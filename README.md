@@ -1,5 +1,7 @@
 # TestMarrow
-**Note that the project doesn't have a stable version yet. Necessary functionality is not implemented and not tested yet**
+
+**Note that the project doesn't have a stable version yet. Necessary functionality is not implemented and not tested yet.**
+
 A library to simplify the test data composing in the source code of tests. When you need fill a complex structures for a test then you have to write something like this using C#:
 
     var expected = new List<Struct1> {
